@@ -446,3 +446,238 @@ If we want to add a dropdown for our VillaNumber to let the user to select an op
    "ApiSettings": {
     "Secret" : "This is used to sign and verify JWT Tokens, replace it with your own secret"
   }
+  
+ - declare a field in our repository and call it inside the class constructor as wee see in the next example:
+ ===============================================
+ 
+ If we'll try to login with the user and password that we'll create on Swagger: we'll receive the status code 200 for success and then  we'll see the values,
+ for our fields and for token the value is encrypted.
+ If we want to check the value we can go on https://jwt.io/ -> paste the value Token and we can see role, uniquename, etc.
+ 
+ 
+ ============================
+ 
+ IF we want to limit the user to access our data from database (we'll use [Authorize] atribute and we are sure that if he it isn't our user can access our data)
+ :
+ Example
+[HttpGet]
+[Authorize]
+[ProducesResponseType(StatusCodes.Status200OK)]
+public async Task<ActionResult<APIResponse>> GetVillas()
+{
+    try
+    {
+        IEnumerable<Villa> villaList = await _dbVilla.GetAllAsync();
+        _response.Result = _mapper.Map<List<VillaDTO>>(villaList);
+        _response.StatusCode = HttpStatusCode.OK;
+        return Ok(_response);
+    }
+    catch (Exception ex)
+    {
+        _response.IsSuccess = false;
+        _response.ErrorMessages
+            = new List<string>() { ex.ToString() };
+    }
+    return _response;
+}
+
+if we want to add a new record but only if we are admins we can proceed as we see in the next example:
+
+Example
+  [HttpPost]
+  [Authorize(Roles = "admin")]
+  [ProducesResponseType(StatusCodes.Status200OK)]
+  [ProducesResponseType(StatusCodes.Status400BadRequest)]
+  [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+  public async Task<ActionResult<APIResponse>> CreateVilla([FromBody] VillaCreateDTO createDTO)
+  {
+      try
+      {
+          if (await _dbVilla.GetAsync(u => u.Name.ToLower() == createDTO.Name.ToLower()) != null)
+          {
+              ModelState.AddModelError("ErrorMessages", "Villa already Exists!");
+              return BadRequest(ModelState);
+          }
+
+          if (createDTO == null)
+          {
+              return BadRequest(createDTO);
+          }
+
+          Villa villa = _mapper.Map<Villa>(createDTO);
+
+          await _dbVilla.CreateAsync(villa);
+          _response.Result = _mapper.Map<VillaDTO>(villa);
+          _response.StatusCode = HttpStatusCode.Created;
+          return CreatedAtRoute("GetVilla", new { id = villa.Id }, _response);
+      }
+      catch (Exception ex)
+      {
+          _response.IsSuccess = false;
+          _response.ErrorMessages
+              = new List<string>() { ex.ToString() };
+      }
+      return _response;
+
+  }
+  
+  but if we want that our authentication work we have to add chqanges in our Program.cs file
+  - add at the top:
+  builder.Services.AddAuthentication( x =>
+{
+    x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+   .AddJwtBearer(x =>
+   {
+       x.RequireHttpsMetadata = false;
+       x.SaveToken = true;
+       x.TokenValidationParameters = new TokenValidationParameters
+       {
+           ValidateIssuerSigningKey = true, 
+           IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(key)),
+           ValidateIssuer= false,
+           ValidateAudience = false
+       };
+   });
+  - add at the bottom app.UseAuthentication(); (before UseAuthorization);
+  
+  if we want to add a condition inside the file _Layout.cshtml and want to use Session we use injection as we see in the next example at the top of the file:
+  @inject Microsoft.AspNetCore.Http.IHttpContextAccessor httpAcc
+  
+  then we can add a validation as wee see in the next example:
+    @if(httpAcc.HttpContext.Session.GetString(SD.SessionToken) != null && 
+  httpAcc.HttpContext.Session.GetString(SD.SessionToken).ToString().Length > 0)
+  {
+      <li class="nav-item">
+          <a class="nav-link text-dark" asp-controller="Auth" asp-action="Logout">Logout</a>
+      </li>
+  }
+  else
+  {
+      <li class="nav-item">
+          <a class="nav-link text-dark" asp-controller="Auth" asp-action="Login">Login</a>
+      </li>
+      <li class="nav-item">
+          <a class="nav-link text-dark" asp-controller="Auth" asp-action="Register">Register</a>
+      </li>
+  }
+  
+  // add default version for our endpoints after added as Nugget Package Versioning
+builder.Services.AddApiVersioning( options =>
+{
+    options.AssumeDefaultVersionWhenUnspecified = true;
+    options.DefaultApiVersion = new ApiVersion(1, 0);
+});
+
+I we have two different versions inside our controller file we have to follow the next steps:
+-> at the top of the file we have to write the atribute     [ApiVersion("1.0")]
+-> then when we have for our endopoints different version we'll use this attribute : 
+ [MapToApiVersion("1.0")]
+ 
+ If we want to use same control besides the version of the project we can use the attribute : 
+-> [ApiVersionNeutral]
+
+If in our project we have a version that is deprecated we have to modify our attribute ApiVersion as we see in the next example:
+[ApiVersion("2.0"), Deprecated = true]
+ 
+ 
+Response Cache
+-  reduces the number of requests a client or proxy makes to a web server.
+
+If we want to use the response cache we'll have to follow the stepse:
+
+- add inside program.cs this line : 
+builder.Services.AddResponseCaching();
+
+- use as atribute in our controller as we see in the next examples:
+        [ResponseCache(Duration = 30)]
+
+If we want to create a Cache profile we will follow these steps:
+
+- inside the program.cs file write the next syntax:
+builder.Services.AddControllers(option =>
+{
+    option.CacheProfiles.Add("Default30",
+        new CacheProfile()
+        {
+            Duration = 30
+        });
+    //option.ReturnHttpNotAcceptable = true;
+}).AddNewtonsoftJson();
+
+- then where we use the attribute [ResponseCache] , we should modify it from [ResponseCache(Duration = 30)] to [ResponseCache(CacheProfileName = "Default30")]
+
+
+Example about how we can add a filter inside our aync function:
+ [HttpGet]
+ [ResponseCache(CacheProfileName = "Default30")]
+ [ProducesResponseType(StatusCodes.Status200OK)]
+ public async Task<ActionResult<APIResponse>> GetVillas([FromQuery]int? occupancy)
+ {
+     try
+     {
+         IEnumerable<Villa> villaList;
+
+         if (occupancy > 0) {
+             villaList = await _dbVilla.GetAllAsync(u => u.Occupancy == occupancy);
+         }
+         else
+         {
+             villaList = await _dbVilla.GetAllAsync();
+         }
+        
+         _response.Result = _mapper.Map<List<VillaDTO>>(villaList);
+         _response.StatusCode = HttpStatusCode.OK;
+         return Ok(_response);
+     }
+     catch (Exception ex)
+     {
+         _response.IsSuccess = false;
+         _response.ErrorMessages
+             = new List<string>() { ex.ToString() };
+     }
+     return _response;
+ }
+ 
+ 
+ If we want to add Identity Library we have to follow the steps
+  - Install Nugget Package (Microsoft.AspNetCore.Identity.EntityFrameworkCore)
+  - then add the next syntax in the Program.cs file:
+builder.Services.AddIdentity<IdentityUser, IdentityRole>().AddEntityFrameworkStores<ApplicationDbContext>();
+  
+  
+  Create a database in Azure
+  https://portal.azure.com/#home
+  
+  
+  SQL Authentication on Azure
+  Server admin login : adminuser
+  Pass: admin123*
+  
+  before deploy on Azure 
+  
+  // Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Magic_VillaV1");
+        options.SwaggerEndpoint("/swagger/v2/swagger.json", "Magic_VillaV2");
+    });
+}
+
+	after deploy on Azure 
+app.UseSwagger();
+app.UseSwaggerUI(options =>
+{
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Magic_VillaV1");
+    options.SwaggerEndpoint("/swagger/v2/swagger.json", "Magic_VillaV2");
+    options.RoutePrefix = String.Empty;
+});
+	
+	If we want to add https://magicvilla.azurewebsites.net inside our web project we have to modify appsettings.json from "VillaAPI": 
+	"https://localhost:7001" to "VillaAPI": https://magicvilla.azurewebsites.net 
+	
+	
